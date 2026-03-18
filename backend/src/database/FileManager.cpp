@@ -1,5 +1,6 @@
 #include "database/FileManager.hpp"
 #include "database/DatabasePool.hpp"
+#include "storage/FileChunker.hpp"
 #include <pqxx/pqxx>
 #include <random>
 #include <sstream>
@@ -80,7 +81,7 @@ bool FileManager::can_user_download(uint64_t file_id, uint64_t user_id) {
     auto conn = pool_.acquire_connection();
     pqxx::work txn(*conn);
     auto result = txn.exec(
-        "SELECT is_upload_complete FROM files WHERE id = $1 AND user_id = $2",
+        "SELECT is_upload_complete FROM files WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
         pqxx::params{file_id, user_id}
     );
     txn.commit();
@@ -120,7 +121,7 @@ std::vector<crow::json::wvalue> FileManager::get_user_files_paginated(uint64_t u
 
     auto result = txn.exec(
         "SELECT id, folder_id, encrypted_name, size_bytes FROM files "
-        "WHERE user_id = $1 AND is_upload_complete = true "
+        "WHERE user_id = $1 AND is_upload_complete = true AND deleted_at IS NULL "
         "ORDER BY id ASC LIMIT $2 OFFSET $3",
         pqxx::params{user_id, limit, offset}
     );
@@ -191,7 +192,7 @@ void FileManager::delete_file(uint64_t file_id, uint64_t user_id) {
     pqxx::work txn(*conn);
 
     auto result = txn.exec(
-        "SELECT id FROM files WHERE id = $1 AND user_id = $2",
+        "SELECT id FROM files WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
         pqxx::params{file_id, user_id}
     );
 
@@ -200,7 +201,7 @@ void FileManager::delete_file(uint64_t file_id, uint64_t user_id) {
     }
 
     txn.exec(
-        "DELETE FROM files WHERE id = $1 AND user_id = $2",
+        "UPDATE files SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND user_id = $2",
         pqxx::params{file_id, user_id}
     );
 
@@ -212,7 +213,7 @@ crow::json::wvalue FileManager::update_file(uint64_t file_id, uint64_t user_id, 
     pqxx::work txn(*conn);
 
     auto result = txn.exec(
-        "SELECT id FROM files WHERE id = $1 AND user_id = $2",
+        "SELECT id FROM files WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
         pqxx::params{file_id, user_id}
     );
     if (result.empty()) {
@@ -289,7 +290,7 @@ std::string FileManager::share_file(uint64_t file_id, uint64_t user_id) {
     pqxx::work txn(*conn);
 
     auto result = txn.exec(
-        "SELECT id FROM files WHERE id = $1 AND user_id = $2",
+        "SELECT id FROM files WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
         pqxx::params{file_id, user_id}
     );
     if (result.empty()) {
@@ -329,4 +330,98 @@ std::pair<uint64_t, std::string> FileManager::get_shared_file_info(const std::st
     txn.commit();
     
     return {file_id, enc_name}; 
+}
+
+crow::json::wvalue FileManager::get_trash(uint64_t user_id) {
+    auto conn = pool_.acquire_connection();
+    pqxx::work txn(*conn);
+
+    auto file_rows = txn.exec(
+        "SELECT id, encrypted_name, size_bytes FROM files WHERE user_id = $1 AND deleted_at IS NOT NULL",
+        pqxx::params{user_id}
+    );
+    std::vector<crow::json::wvalue> files;
+    for (const auto& row : file_rows) {
+        crow::json::wvalue f;
+        f["id"] = row[0].as<int>();
+        f["encrypted_name"] = row[1].as<std::string>();
+        f["size_bytes"] = row[2].as<int64_t>();
+        files.push_back(std::move(f));
+    }
+
+    auto folder_rows = txn.exec(
+        "SELECT id, encrypted_name FROM folders WHERE user_id = $1 AND deleted_at IS NOT NULL",
+        pqxx::params{user_id}
+    );
+    std::vector<crow::json::wvalue> folders;
+    for (const auto& row : folder_rows) {
+        crow::json::wvalue d;
+        d["id"] = row[0].as<int>();
+        d["encrypted_name"] = row[1].as<std::string>();
+        folders.push_back(std::move(d));
+    }
+
+    txn.commit();
+
+    crow::json::wvalue res;
+    res["files"] = std::move(files);
+    res["folders"] = std::move(folders);
+    return res;
+}
+
+void FileManager::restore_file(uint64_t file_id, uint64_t user_id) {
+    auto conn = pool_.acquire_connection();
+    pqxx::work txn(*conn);
+
+    auto check = txn.exec(
+        "SELECT folder_id FROM files WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
+        pqxx::params{file_id, user_id}
+    );
+    if (check.empty()) throw std::runtime_error("NOT_FOUND");
+
+    std::optional<uint64_t> folder_id;
+    if (!check[0][0].is_null()) {
+        folder_id = check[0][0].as<uint64_t>();
+        auto parent_check = txn.exec(
+            "SELECT deleted_at FROM folders WHERE id = $1 AND user_id = $2",
+            pqxx::params{*folder_id, user_id}
+        );
+        if (!parent_check.empty() && !parent_check[0][0].is_null()) {
+            folder_id.reset();
+        }
+    }
+
+    if (folder_id.has_value()) {
+        txn.exec(
+            "UPDATE files SET deleted_at = NULL, folder_id = $1 WHERE id = $2 AND user_id = $3",
+            pqxx::params{*folder_id, file_id, user_id}
+        );
+    } else {
+        txn.exec(
+            "UPDATE files SET deleted_at = NULL, folder_id = NULL WHERE id = $1 AND user_id = $2",
+            pqxx::params{file_id, user_id}
+        );
+    }
+
+    txn.commit();
+}
+
+void FileManager::empty_trash(uint64_t user_id, FileChunker* chunker) {
+    auto conn = pool_.acquire_connection();
+    pqxx::work txn(*conn);
+
+    auto files_to_delete = txn.exec(
+        "SELECT id FROM files WHERE user_id = $1 AND deleted_at IS NOT NULL",
+        pqxx::params{user_id}
+    );
+
+    for (const auto& row : files_to_delete) {
+        auto fid = row[0].as<uint64_t>();
+        if (chunker) chunker->delete_file(fid);
+    }
+
+    txn.exec("DELETE FROM files WHERE user_id = $1 AND deleted_at IS NOT NULL", pqxx::params{user_id});
+    txn.exec("DELETE FROM folders WHERE user_id = $1 AND deleted_at IS NOT NULL", pqxx::params{user_id});
+
+    txn.commit();
 }

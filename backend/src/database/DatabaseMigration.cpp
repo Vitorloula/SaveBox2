@@ -70,6 +70,10 @@ bool DatabaseMigration::run(DatabasePool& pool) {
         w.exec("ALTER TABLE files ADD COLUMN IF NOT EXISTS total_chunks INTEGER NOT NULL DEFAULT 1;");
         w.exec("ALTER TABLE files ALTER COLUMN physical_path DROP NOT NULL;");
 
+        // Lixeira
+        w.exec("ALTER TABLE folders ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;");
+        w.exec("ALTER TABLE files ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL;");
+
         // Índices
         w.exec("CREATE INDEX IF NOT EXISTS idx_folders_user_parent ON folders(user_id, parent_id);");
         w.exec("CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id);");

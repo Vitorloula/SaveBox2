@@ -40,12 +40,23 @@ std::vector<uint64_t> FolderManager::delete_folder(uint64_t folder_id, uint64_t 
     pqxx::work txn(*conn);
 
     auto check = txn.exec(
-        "SELECT id FROM folders WHERE id = $1 AND user_id = $2",
+        "SELECT id FROM folders WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
         pqxx::params{folder_id, user_id}
     );
     if (check.empty()) {
         throw std::runtime_error("NOT_FOUND");
     }
+
+    txn.exec(
+        "WITH RECURSIVE folder_tree AS ( "
+        "  SELECT id FROM folders WHERE id = $1 "
+        "  UNION ALL "
+        "  SELECT f.id FROM folders f INNER JOIN folder_tree ft ON f.parent_id = ft.id "
+        ") "
+        "UPDATE folders SET deleted_at = CURRENT_TIMESTAMP "
+        "WHERE id IN (SELECT id FROM folder_tree);",
+        pqxx::params{folder_id}
+    );
 
     auto file_res = txn.exec(
         "WITH RECURSIVE folder_tree AS ( "
@@ -53,7 +64,9 @@ std::vector<uint64_t> FolderManager::delete_folder(uint64_t folder_id, uint64_t 
         "  UNION ALL "
         "  SELECT f.id FROM folders f INNER JOIN folder_tree ft ON f.parent_id = ft.id "
         ") "
-        "SELECT id FROM files WHERE folder_id IN (SELECT id FROM folder_tree)",
+        "UPDATE files SET deleted_at = CURRENT_TIMESTAMP "
+        "WHERE folder_id IN (SELECT id FROM folder_tree) "
+        "RETURNING id;",
         pqxx::params{folder_id}
     );
 
@@ -61,11 +74,6 @@ std::vector<uint64_t> FolderManager::delete_folder(uint64_t folder_id, uint64_t 
     for (const auto& row : file_res) {
         files_to_delete.push_back(row[0].as<uint64_t>());
     }
-
-    txn.exec(
-        "DELETE FROM folders WHERE id = $1 AND user_id = $2;",
-        pqxx::params{folder_id, user_id}
-    );
 
     txn.commit();
     return files_to_delete;
@@ -89,7 +97,7 @@ crow::json::wvalue FolderManager::get_folder_contents(int folder_id, int user_id
 
     if (folder_id != 0) {
         auto check = txn.exec(
-            "SELECT id FROM folders WHERE id = $1 AND user_id = $2",
+            "SELECT id FROM folders WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
             pqxx::params{folder_id, user_id}
         );
         if (check.empty()) {
@@ -100,12 +108,12 @@ crow::json::wvalue FolderManager::get_folder_contents(int folder_id, int user_id
     pqxx::result sub_rows;
     if (folder_id == 0) {
         sub_rows = txn.exec(
-            "SELECT id, encrypted_name FROM folders WHERE parent_id IS NULL AND user_id = $1",
+            "SELECT id, encrypted_name FROM folders WHERE parent_id IS NULL AND user_id = $1 AND deleted_at IS NULL",
             pqxx::params{user_id}
         );
     } else {
         sub_rows = txn.exec(
-            "SELECT id, encrypted_name FROM folders WHERE parent_id = $1 AND user_id = $2",
+            "SELECT id, encrypted_name FROM folders WHERE parent_id = $1 AND user_id = $2 AND deleted_at IS NULL",
             pqxx::params{folder_id, user_id}
         );
     }
@@ -122,13 +130,13 @@ crow::json::wvalue FolderManager::get_folder_contents(int folder_id, int user_id
     if (folder_id == 0) {
         file_rows = txn.exec(
             "SELECT id, encrypted_name, size_bytes FROM files "
-            "WHERE folder_id IS NULL AND user_id = $1 AND is_upload_complete = true",
+            "WHERE folder_id IS NULL AND user_id = $1 AND is_upload_complete = true AND deleted_at IS NULL",
             pqxx::params{user_id}
         );
     } else {
         file_rows = txn.exec(
             "SELECT id, encrypted_name, size_bytes FROM files "
-            "WHERE folder_id = $1 AND user_id = $2 AND is_upload_complete = true",
+            "WHERE folder_id = $1 AND user_id = $2 AND is_upload_complete = true AND deleted_at IS NULL",
             pqxx::params{folder_id, user_id}
         );
     }
@@ -155,7 +163,7 @@ std::vector<crow::json::wvalue> FolderManager::get_all_folders(uint64_t user_id)
     pqxx::work txn(*conn);
 
     auto folder_rows = txn.exec(
-        "SELECT id, encrypted_name, parent_id FROM folders WHERE user_id = $1",
+        "SELECT id, encrypted_name, parent_id FROM folders WHERE user_id = $1 AND deleted_at IS NULL",
         pqxx::params{user_id}
     );
 
@@ -179,7 +187,7 @@ crow::json::wvalue FolderManager::update_folder(uint64_t folder_id, uint64_t use
     pqxx::work txn(*conn);
 
     auto result = txn.exec(
-        "SELECT id FROM folders WHERE id = $1 AND user_id = $2",
+        "SELECT id FROM folders WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
         pqxx::params{folder_id, user_id}
     );
     if (result.empty()) {
@@ -192,7 +200,7 @@ crow::json::wvalue FolderManager::update_folder(uint64_t folder_id, uint64_t use
         }
         if (parent_id.value() != 0) { // 0 means moving to root
             auto parent_res = txn.exec(
-                "SELECT id FROM folders WHERE id = $1 AND user_id = $2",
+                "SELECT id FROM folders WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
                 pqxx::params{parent_id.value(), user_id}
             );
             if (parent_res.empty()) {
@@ -240,4 +248,80 @@ crow::json::wvalue FolderManager::update_folder(uint64_t folder_id, uint64_t use
     
     txn.commit();
     return ret;
+}
+
+void FolderManager::restore_folder(uint64_t folder_id, uint64_t user_id) {
+    auto conn = pool_.acquire_connection();
+    pqxx::work txn(*conn);
+
+    auto check = txn.exec(
+        "SELECT id, parent_id FROM folders WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
+        pqxx::params{folder_id, user_id}
+    );
+    if (check.empty()) throw std::runtime_error("NOT_FOUND");
+
+    std::optional<uint64_t> parent_id;
+    if (!check[0][1].is_null()) {
+        parent_id = check[0][1].as<uint64_t>();
+        auto parent_check = txn.exec(
+            "SELECT deleted_at FROM folders WHERE id = $1 AND user_id = $2",
+            pqxx::params{*parent_id, user_id}
+        );
+        if (!parent_check.empty() && !parent_check[0][0].is_null()) {
+            parent_id.reset();
+        }
+    }
+
+    if (parent_id.has_value()) {
+        txn.exec(
+            "WITH RECURSIVE folder_tree AS ( "
+            "  SELECT id FROM folders WHERE id = $1 "
+            "  UNION ALL "
+            "  SELECT f.id FROM folders f INNER JOIN folder_tree ft ON f.parent_id = ft.id "
+            ") "
+            "UPDATE folders SET deleted_at = NULL "
+            "WHERE id IN (SELECT id FROM folder_tree);",
+            pqxx::params{folder_id}
+        );
+
+        txn.exec(
+            "WITH RECURSIVE folder_tree AS ( "
+            "  SELECT id FROM folders WHERE id = $1 "
+            "  UNION ALL "
+            "  SELECT f.id FROM folders f INNER JOIN folder_tree ft ON f.parent_id = ft.id "
+            ") "
+            "UPDATE files SET deleted_at = NULL "
+            "WHERE folder_id IN (SELECT id FROM folder_tree);",
+            pqxx::params{folder_id}
+        );
+    } else {
+        txn.exec(
+            "UPDATE folders SET parent_id = NULL WHERE id = $1 AND user_id = $2",
+            pqxx::params{folder_id, user_id}
+        );
+
+        txn.exec(
+            "WITH RECURSIVE folder_tree AS ( "
+            "  SELECT id FROM folders WHERE id = $1 "
+            "  UNION ALL "
+            "  SELECT f.id FROM folders f INNER JOIN folder_tree ft ON f.parent_id = ft.id "
+            ") "
+            "UPDATE folders SET deleted_at = NULL "
+            "WHERE id IN (SELECT id FROM folder_tree);",
+            pqxx::params{folder_id}
+        );
+
+        txn.exec(
+            "WITH RECURSIVE folder_tree AS ( "
+            "  SELECT id FROM folders WHERE id = $1 "
+            "  UNION ALL "
+            "  SELECT f.id FROM folders f INNER JOIN folder_tree ft ON f.parent_id = ft.id "
+            ") "
+            "UPDATE files SET deleted_at = NULL "
+            "WHERE folder_id IN (SELECT id FROM folder_tree);",
+            pqxx::params{folder_id}
+        );
+    }
+
+    txn.commit();
 }

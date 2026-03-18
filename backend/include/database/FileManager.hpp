@@ -30,6 +30,10 @@ public:
     std::string share_file(uint64_t file_id, uint64_t user_id);
     std::pair<uint64_t, std::string> get_shared_file_info(const std::string& uuid);
 
+    crow::json::wvalue get_trash(uint64_t user_id);
+    void restore_file(uint64_t file_id, uint64_t user_id);
+    void empty_trash(uint64_t user_id, class FileChunker* chunker);
+
 private:
     DatabasePool& pool_;
 };

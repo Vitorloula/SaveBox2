@@ -56,11 +56,14 @@ TEST_CASE("Gestão de Pastas - Hierarquia e Cascata", "[folders][hierarchy][casc
 
         REQUIRE_NOTHROW(manager.delete_folder(parent_id, fake_user_id));
 
-        bool parent_exists = manager.folder_exists(parent_id);
-        bool child_exists = manager.folder_exists(child_id);
-
-        REQUIRE(parent_exists == false);
-        REQUIRE(child_exists == false);
+        {
+            auto conn = pool.acquire_connection();
+            pqxx::work W(*conn);
+            auto res_parent = W.exec("SELECT count(*) FROM folders WHERE id = $1 AND deleted_at IS NOT NULL", pqxx::params{parent_id});
+            auto res_child = W.exec("SELECT count(*) FROM folders WHERE id = $1 AND deleted_at IS NOT NULL", pqxx::params{child_id});
+            REQUIRE(res_parent[0][0].as<int>() == 1);
+            REQUIRE(res_child[0][0].as<int>() == 1);
+        }
     }
 
     {

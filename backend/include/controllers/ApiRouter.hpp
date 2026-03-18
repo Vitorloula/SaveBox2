@@ -30,6 +30,12 @@ public:
     crow::response handle_get_uploaded_chunks(const crow::request& req, int file_id);
     crow::response handle_delete_file(const crow::request& req, int file_id);
     crow::response handle_delete_folder(const crow::request& req, int folder_id);
+    crow::response handle_trash_folder(const crow::request& req, int folder_id);
+    crow::response handle_trash_file(const crow::request& req, int file_id);
+    crow::response handle_restore_folder(const crow::request& req, int folder_id);
+    crow::response handle_restore_file(const crow::request& req, int file_id);
+    crow::response handle_get_trash(const crow::request& req);
+    crow::response handle_empty_trash(const crow::request& req);
     crow::response handle_update_file(const crow::request& req, int file_id);
     crow::response handle_update_folder(const crow::request& req, int folder_id);
     crow::response handle_share_file(const crow::request& req, int file_id);
