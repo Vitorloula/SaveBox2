@@ -37,6 +37,39 @@ int FileManager::init_upload(uint64_t user_id, std::optional<uint64_t> folder_id
     auto conn = pool_.acquire_connection();
     pqxx::work txn(*conn);
 
+    // Verificação de duplicidade
+    std::string dup_query;
+    if (folder_id.has_value()) {
+        dup_query = "SELECT id FROM files WHERE user_id = $1 AND name_hash = $2 AND deleted_at IS NULL AND folder_id = $3";
+    } else {
+        dup_query = "SELECT id FROM files WHERE user_id = $1 AND name_hash = $2 AND deleted_at IS NULL AND folder_id IS NULL";
+    }
+
+    pqxx::result dup_res;
+    if (folder_id.has_value()) {
+        dup_res = txn.exec(dup_query, pqxx::params{user_id, name_hash, folder_id.value()});
+    } else {
+        dup_res = txn.exec(dup_query, pqxx::params{user_id, name_hash});
+    }
+
+    if (!dup_res.empty()) {
+        throw std::runtime_error("FILE_ALREADY_EXISTS");
+    }
+
+    auto check_quota = txn.exec(
+        "SELECT used_storage_bytes, max_storage_bytes FROM users WHERE id = $1 FOR UPDATE",
+        pqxx::params{user_id}
+    );
+    if (check_quota.empty()) throw std::runtime_error("NOT_FOUND");
+    uint64_t used = check_quota[0][0].as<uint64_t>();
+    uint64_t max = check_quota[0][1].as<uint64_t>();
+    if (used + size_bytes > max) {
+        throw std::runtime_error("QUOTA_EXCEEDED");
+    }
+
+    txn.exec("UPDATE users SET used_storage_bytes = used_storage_bytes + $1 WHERE id = $2",
+             pqxx::params{size_bytes, user_id});
+
     auto result = txn.exec(
         "INSERT INTO files (user_id, folder_id, encrypted_name, name_hash, size_bytes, total_chunks) "
         "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
@@ -374,10 +407,12 @@ void FileManager::restore_file(uint64_t file_id, uint64_t user_id) {
     pqxx::work txn(*conn);
 
     auto check = txn.exec(
-        "SELECT folder_id FROM files WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
+        "SELECT folder_id, name_hash FROM files WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
         pqxx::params{file_id, user_id}
     );
     if (check.empty()) throw std::runtime_error("NOT_FOUND");
+
+    std::string name_hash = check[0][1].as<std::string>();
 
     std::optional<uint64_t> folder_id;
     if (!check[0][0].is_null()) {
@@ -389,6 +424,20 @@ void FileManager::restore_file(uint64_t file_id, uint64_t user_id) {
         if (!parent_check.empty() && !parent_check[0][0].is_null()) {
             folder_id.reset();
         }
+    }
+
+    std::string dup_query;
+    pqxx::result dup_res;
+    if (folder_id.has_value()) {
+        dup_query = "SELECT id FROM files WHERE user_id = $1 AND name_hash = $2 AND deleted_at IS NULL AND folder_id = $3";
+        dup_res = txn.exec(dup_query, pqxx::params{user_id, name_hash, *folder_id});
+    } else {
+        dup_query = "SELECT id FROM files WHERE user_id = $1 AND name_hash = $2 AND deleted_at IS NULL AND folder_id IS NULL";
+        dup_res = txn.exec(dup_query, pqxx::params{user_id, name_hash});
+    }
+
+    if (!dup_res.empty()) {
+        throw std::runtime_error("FILE_ALREADY_EXISTS");
     }
 
     if (folder_id.has_value()) {
@@ -410,6 +459,16 @@ void FileManager::empty_trash(uint64_t user_id, FileChunker* chunker) {
     auto conn = pool_.acquire_connection();
     pqxx::work txn(*conn);
 
+    auto quota_release = txn.exec(
+        "SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE user_id = $1 AND deleted_at IS NOT NULL",
+        pqxx::params{user_id}
+    );
+    uint64_t freed_bytes = quota_release[0][0].as<uint64_t>();
+    if (freed_bytes > 0) {
+        txn.exec("UPDATE users SET used_storage_bytes = used_storage_bytes - $1 WHERE id = $2",
+                 pqxx::params{freed_bytes, user_id});
+    }
+
     auto files_to_delete = txn.exec(
         "SELECT id FROM files WHERE user_id = $1 AND deleted_at IS NOT NULL",
         pqxx::params{user_id}
@@ -424,4 +483,16 @@ void FileManager::empty_trash(uint64_t user_id, FileChunker* chunker) {
     txn.exec("DELETE FROM folders WHERE user_id = $1 AND deleted_at IS NOT NULL", pqxx::params{user_id});
 
     txn.commit();
+}
+
+crow::json::wvalue FileManager::get_user_quota(uint64_t user_id) {
+    auto conn = pool_.acquire_connection();
+    pqxx::work txn(*conn);
+    auto res = txn.exec("SELECT used_storage_bytes, max_storage_bytes FROM users WHERE id = $1", pqxx::params{user_id});
+    if (res.empty()) throw std::runtime_error("NOT_FOUND");
+    crow::json::wvalue json;
+    json["used_bytes"] = res[0][0].as<uint64_t>();
+    json["max_bytes"] = res[0][1].as<uint64_t>();
+    txn.commit();
+    return json;
 }

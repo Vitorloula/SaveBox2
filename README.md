@@ -27,12 +27,13 @@ O SaveBox 2.0 foi construído com a filosofia de Zero-Knowledge, atuando como um
 Todas as requisições (exceto `/health`, `/register`, `/login` e `/share`) exigem o Header HTTP:
 `Authorization: Bearer <seu_token_jwt>`
 
-### Autenticação
+### Autenticação e Usuário
 | Método | Endpoint | Descrição |
 | :--- | :--- | :--- |
 | `GET` | `/health` | Healthcheck do servidor. |
 | `POST` | `/register` | Registra um novo usuário (JSON: `username`, `password`). |
 | `POST` | `/login` | Autentica e retorna o JWT Bearer Token. |
+| `GET` | `/users/me/quota` | Consulta limite e uso de armazenamento. |
 
 ### Gerenciamento de Pastas
 | Método | Endpoint | Descrição |
@@ -52,6 +53,14 @@ Todas as requisições (exceto `/health`, `/register`, `/login` e `/share`) exig
 | `GET` | `/files/<id>/download` | Baixa o arquivo. Suporta cabeçalho HTTP `Range`. |
 | `PUT` | `/files/<id>` | Renomeia ou move o arquivo de pasta. |
 | `DELETE` | `/files/<id>` | Deleta o arquivo físico e lógico. |
+
+### Lixeira e Recuperação
+| Método | Endpoint | Descrição |
+| :--- | :--- | :--- |
+| `GET` | `/trash` | Lista todos os itens deletados (Soft Deleted). |
+| `POST` | `/folders/<id>/restore` | Restaura pasta (resolve colisões de nome). |
+| `POST` | `/files/<id>/restore` | Restaura arquivo para local original ou raiz. |
+| `DELETE` | `/trash/empty` | **Hard Delete:** Limpa a lixeira permanentemente. |
 
 ### Compartilhamento (Links Públicos)
 | Método | Endpoint | Descrição |

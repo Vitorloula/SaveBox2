@@ -14,6 +14,19 @@ std::string ApiRouter::handle_healthcheck() const {
     return R"({"status":"online"})";
 }
 
+crow::response ApiRouter::handle_get_quota(const crow::request& req) {
+    auto user_id_opt = authenticate_request(req);
+    if (!user_id_opt) return crow::response(401, R"({"error":"Token ausente ou invalido"})");
+    uint64_t user_id = *user_id_opt;
+
+    try {
+        crow::json::wvalue res = file_mgr_->get_user_quota(user_id);
+        return crow::response(200, res);
+    } catch (const std::exception& e) {
+        return crow::response(500, R"({"error":"Erro interno"})");
+    }
+}
+
 crow::response ApiRouter::handle_register(const crow::request& req) {
     try {
         auto body = crow::json::load(req.body);
@@ -117,11 +130,15 @@ crow::response ApiRouter::handle_create_folder(const crow::request& req) {
         uint64_t folder_id = folder_mgr_->create_folder(user_id, parent_id_opt, encrypted_name, name_hash);
 
         return crow::response(201,
-            R"({"message":"Pasta criada", "folder_id":)" + std::to_string(folder_id) + "}");
+            R"({"message":"Pasta criada", "id":)" + std::to_string(folder_id) + "}");
 
     } catch (const pqxx::unique_violation& e) {
         return crow::response(409, R"({"error":"Pasta ja existe"})");
     } catch (const std::exception& e) {
+        std::string msg = e.what();
+        if (msg == "FOLDER_ALREADY_EXISTS") {
+            return crow::response(409, R"({"error":"Uma pasta com este nome ja existe neste diretorio"})");
+        }
         return crow::response(500, R"({"error":"Erro interno"})");
     }
 }
@@ -162,7 +179,14 @@ crow::response ApiRouter::handle_init_file_upload(const crow::request& req) {
 
         return crow::response(201, R"({"file_id":)" + std::to_string(file_id) + "}");
 
-    } catch (const std::exception&) {
+    } catch (const std::exception& e) {
+        std::string msg = e.what();
+        if (msg == "QUOTA_EXCEEDED") {
+            return crow::response(402, R"({"error":"Payment Required - Quota Exceeded"})");
+        }
+        if (msg == "FILE_ALREADY_EXISTS") {
+            return crow::response(409, R"({"error":"Um arquivo com este nome ja existe nesta pasta"})");
+        }
         return crow::response(500, R"({"error":"Erro interno"})");
     }
 }
@@ -442,8 +466,14 @@ crow::response ApiRouter::handle_restore_folder(const crow::request& req, int fo
         return crow::response(200, R"({"message":"Pasta restaurada com sucesso"})");
     } catch (const std::exception& e) {
         std::string msg = e.what();
-        if (msg == "NOT_FOUND") return crow::response(404, R"({"error":"Pasta nao encontrada na lixeira"})");
-        return crow::response(500, R"({"error":"Erro interno"})");
+        if (msg == "NOT_FOUND")
+            return crow::response(404, R"({"error":"Pasta nao encontrada na lixeira"})");
+
+        if (msg == "FOLDER_ALREADY_EXISTS" || msg == "FILE_ALREADY_EXISTS") {
+            return crow::response(409, R"({"error":"Item ja existe no destino"})");
+        }
+
+        return crow::response(500, R"({"error":"Erro interno: "})" + msg);
     }
 }
 
@@ -458,7 +488,8 @@ crow::response ApiRouter::handle_restore_file(const crow::request& req, int file
     } catch (const std::exception& e) {
         std::string msg = e.what();
         if (msg == "NOT_FOUND") return crow::response(404, R"({"error":"Arquivo nao encontrado na lixeira"})");
-        return crow::response(500, R"({"error":"Erro interno"})");
+        if (msg == "FILE_ALREADY_EXISTS" || msg == "FOLDER_ALREADY_EXISTS") return crow::response(409, R"({"error":"Item ja existe no destino"})");
+        return crow::response(500, R"({"error":"Erro interno: "})" + msg);
     }
 }
 
@@ -520,6 +551,7 @@ crow::response ApiRouter::handle_update_file(const crow::request& req, int file_
         if (msg == "NOT_FOUND") return crow::response(404, R"({"error":"Nao encontrado"})");
         if (msg == "FORBIDDEN") return crow::response(403, R"({"error":"Proibido"})");
         if (msg == "BAD_REQUEST") return crow::response(400, R"({"error":"Requisicao invalida"})");
+        if (msg == "FILE_ALREADY_EXISTS") return crow::response(409, R"({"error":"Um arquivo com este nome ja existe nesta pasta"})");
         return crow::response(500, R"({"error":"Erro interno"})");
     }
 }
@@ -606,6 +638,13 @@ void ApiRouter::setup_routes(crow::App<crow::CORSHandler>& app) {
     CROW_ROUTE(app, "/health").methods(crow::HTTPMethod::Get)
     ([this]() {
         auto res = crow::response(handle_healthcheck());
+        res.set_header("Content-Type", "application/json");
+        return res;
+    });
+
+    CROW_ROUTE(app, "/users/me/quota").methods(crow::HTTPMethod::Get)
+    ([this](const crow::request& req) {
+        auto res = handle_get_quota(req);
         res.set_header("Content-Type", "application/json");
         return res;
     });

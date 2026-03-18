@@ -46,7 +46,7 @@ TEST_CASE("Gestão de Pastas - Hierarquia e Cascata", "[folders][hierarchy][casc
 
         REQUIRE_THROWS_AS(
             manager.create_folder(fake_user_id, std::nullopt, "Fotos_Copia", "hash_fotos"),
-            pqxx::unique_violation
+            std::runtime_error
         );
     }
 

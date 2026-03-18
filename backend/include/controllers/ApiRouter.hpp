@@ -19,6 +19,7 @@ public:
               FileManager* file_mgr = nullptr, FileChunker* chunker = nullptr);
 
     std::string handle_healthcheck() const;
+    crow::response handle_get_quota(const crow::request& req);
     crow::response handle_register(const crow::request& req);
     crow::response handle_login(const crow::request& req);
     crow::response handle_create_folder(const crow::request& req);

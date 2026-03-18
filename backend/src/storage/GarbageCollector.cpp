@@ -13,7 +13,7 @@ void GarbageCollector::run_cleanup() {
 
     try {
         std::string query_select = R"(
-            SELECT id FROM files
+            SELECT id, user_id, size_bytes FROM files
             WHERE (is_upload_complete = FALSE AND created_at < NOW() - INTERVAL '4 hours')
                OR (deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days')
         )";
@@ -22,12 +22,20 @@ void GarbageCollector::run_cleanup() {
 
         for (const auto& row : result) {
             uint64_t file_id = row[0].as<uint64_t>();
+            uint64_t user_id = row[1].as<uint64_t>();
+            uint64_t size_bytes = row[2].as<uint64_t>();
+            
             try {
                 if (chunker_) {
                     chunker_->delete_file(file_id);
                 }
             } catch (const std::exception& e) {
                 std::cerr << "GC: Falha ao deletar arquivo fisico " << file_id << ": " << e.what() << "\n";
+            }
+            
+            if (size_bytes > 0) {
+                W.exec("UPDATE users SET used_storage_bytes = GREATEST(0, used_storage_bytes - $1) WHERE id = $2",
+                       pqxx::params{size_bytes, user_id});
             }
         }
 

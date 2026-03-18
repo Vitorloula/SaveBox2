@@ -16,6 +16,8 @@ public:
                     const std::string& enc_name, const std::string& name_hash,
                     uint64_t size_bytes, int total_chunks);
 
+    crow::json::wvalue get_user_quota(uint64_t user_id);
+
     void mark_upload_complete(uint64_t file_id);
 
     int get_total_chunks(uint64_t file_id);

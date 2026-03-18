@@ -14,6 +14,21 @@ uint64_t FolderManager::create_folder(uint64_t user_id,
     auto conn = pool_.acquire_connection();
     pqxx::work W(*conn);
 
+    // Verificação de duplicidade
+    std::string dup_query;
+    pqxx::result dup_res;
+    if (parent_id.has_value()) {
+        dup_query = "SELECT id FROM folders WHERE user_id = $1 AND name_hash = $2 AND deleted_at IS NULL AND parent_id = $3";
+        dup_res = W.exec(dup_query, pqxx::params{user_id, name_hash, parent_id.value()});
+    } else {
+        dup_query = "SELECT id FROM folders WHERE user_id = $1 AND name_hash = $2 AND deleted_at IS NULL AND parent_id IS NULL";
+        dup_res = W.exec(dup_query, pqxx::params{user_id, name_hash});
+    }
+
+    if (!dup_res.empty()) {
+        throw std::runtime_error("FOLDER_ALREADY_EXISTS");
+    }
+
     pqxx::result res;
 
     if (parent_id.has_value()) {
@@ -198,7 +213,7 @@ crow::json::wvalue FolderManager::update_folder(uint64_t folder_id, uint64_t use
         if (parent_id.value() == folder_id) {
             throw std::runtime_error("BAD_REQUEST");
         }
-        if (parent_id.value() != 0) { // 0 means moving to root
+        if (parent_id.value() != 0) { // 0 significa "Mover para a Raiz"
             auto parent_res = txn.exec(
                 "SELECT id FROM folders WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
                 pqxx::params{parent_id.value(), user_id}
@@ -255,10 +270,12 @@ void FolderManager::restore_folder(uint64_t folder_id, uint64_t user_id) {
     pqxx::work txn(*conn);
 
     auto check = txn.exec(
-        "SELECT id, parent_id FROM folders WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
+        "SELECT id, parent_id, name_hash FROM folders WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
         pqxx::params{folder_id, user_id}
     );
     if (check.empty()) throw std::runtime_error("NOT_FOUND");
+
+    std::string name_hash = check[0][2].as<std::string>();
 
     std::optional<uint64_t> parent_id;
     if (!check[0][1].is_null()) {
@@ -270,6 +287,20 @@ void FolderManager::restore_folder(uint64_t folder_id, uint64_t user_id) {
         if (!parent_check.empty() && !parent_check[0][0].is_null()) {
             parent_id.reset();
         }
+    }
+
+    std::string dup_query;
+    pqxx::result dup_res;
+    if (parent_id.has_value()) {
+        dup_query = "SELECT id FROM folders WHERE user_id = $1 AND name_hash = $2 AND deleted_at IS NULL AND parent_id = $3";
+        dup_res = txn.exec(dup_query, pqxx::params{user_id, name_hash, *parent_id});
+    } else {
+        dup_query = "SELECT id FROM folders WHERE user_id = $1 AND name_hash = $2 AND deleted_at IS NULL AND parent_id IS NULL";
+        dup_res = txn.exec(dup_query, pqxx::params{user_id, name_hash});
+    }
+
+    if (!dup_res.empty()) {
+        throw std::runtime_error("FOLDER_ALREADY_EXISTS");
     }
 
     if (parent_id.has_value()) {

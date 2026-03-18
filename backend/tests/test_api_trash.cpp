@@ -19,20 +19,21 @@ TEST_CASE("API de Lixeira (Soft Delete)", "[api][trash]") {
 
     ApiRouter router(pool, auth, folder_mgr, &file_mgr);
 
+    std::string test_username_1 = "trash_user_1_" + std::to_string(rand());
+    std::string test_username_2 = "trash_user_2_" + std::to_string(rand());
     int fake_user_id = 0;
     int other_user_id = 0;
     {
         auto conn = pool.acquire_connection();
         pqxx::work txn(*conn);
-        txn.exec("DELETE FROM users WHERE username IN ('trash_user_1', 'trash_user_2')");
         
         auto res1 = txn.exec(
-            "INSERT INTO users (username, password_hash) VALUES ('trash_user_1', 'hash_1') RETURNING id"
+            "INSERT INTO users (username, password_hash) VALUES ('" + test_username_1 + "', 'hash_1') RETURNING id"
         );
         fake_user_id = res1[0][0].as<int>();
-        
+
         auto res2 = txn.exec(
-            "INSERT INTO users (username, password_hash) VALUES ('trash_user_2', 'hash_2') RETURNING id"
+            "INSERT INTO users (username, password_hash) VALUES ('" + test_username_2 + "', 'hash_2') RETURNING id"
         );
         other_user_id = res2[0][0].as<int>();
         
@@ -45,15 +46,16 @@ TEST_CASE("API de Lixeira (Soft Delete)", "[api][trash]") {
     auto create_test_folder = [&](int user_id, const std::string& token, int parent_id = -1) -> int {
         crow::request req;
         req.add_header("Authorization", "Bearer " + token);
+        std::string unique_hash = "hash_x_" + std::to_string(rand());
         if (parent_id == -1) {
-            req.body = R"({"encrypted_name": "folder_x", "name_hash": "hash_x"})";
+            req.body = R"({"encrypted_name": "folder_x", "name_hash": ")" + unique_hash + R"("})";
         } else {
-            req.body = R"({"encrypted_name": "folder_x", "name_hash": "hash_x", "parent_id": )" + std::to_string(parent_id) + "}";
+            req.body = R"({"encrypted_name": "folder_x", "name_hash": ")" + unique_hash + R"(", "parent_id": )" + std::to_string(parent_id) + "}";
         }
         crow::response res = router.handle_create_folder(req);
         if (res.code == 201) {
             auto body = crow::json::load(res.body);
-            return body["folder_id"].i();
+            return body["id"].i();
         }
         return -1;
     };
@@ -167,11 +169,54 @@ TEST_CASE("API de Lixeira (Soft Delete)", "[api][trash]") {
         REQUIRE((restore_res.code == 403 || restore_res.code == 404));
     }
 
+    SECTION("7. Edge Case - Restored Item Collision") {
+        crow::request req_create_a;
+        req_create_a.add_header("Authorization", "Bearer " + valid_token);
+        req_create_a.body = R"({"folder_id": null, "encrypted_name": "enc_file_a", "name_hash": "hash_a", "size_bytes": 100, "total_chunks": 1})";
+        crow::response res_create_a = router.handle_init_file_upload(req_create_a);
+        REQUIRE(res_create_a.code == 201);
+        int file_a_id = crow::json::load(res_create_a.body)["file_id"].i();
+
+        crow::request req_trash_a;
+        req_trash_a.add_header("Authorization", "Bearer " + valid_token);
+        crow::response res_trash_a = router.handle_trash_file(req_trash_a, file_a_id);
+        REQUIRE(res_trash_a.code == 200);
+
+        crow::response res_create_a2 = router.handle_init_file_upload(req_create_a);
+        REQUIRE(res_create_a2.code == 201);
+        
+        crow::request req_restore_a;
+        req_restore_a.add_header("Authorization", "Bearer " + valid_token);
+        crow::response res_restore_a = router.handle_restore_file(req_restore_a, file_a_id);
+        REQUIRE(res_restore_a.code == 409);
+        REQUIRE(res_restore_a.body.find("Item ja existe no destino") != std::string::npos);
+
+        crow::request req_create_folder_a;
+        req_create_folder_a.add_header("Authorization", "Bearer " + valid_token);
+        req_create_folder_a.body = R"({"parent_id": null, "encrypted_name": "enc_folder_a", "name_hash": "folder_hash_a"})";
+        crow::response res_create_folder_a = router.handle_create_folder(req_create_folder_a);
+        REQUIRE(res_create_folder_a.code == 201);
+        int folder_a_id = crow::json::load(res_create_folder_a.body)["id"].i();
+
+        crow::request req_trash_folder_a;
+        req_trash_folder_a.add_header("Authorization", "Bearer " + valid_token);
+        crow::response res_trash_folder_a = router.handle_trash_folder(req_trash_folder_a, folder_a_id);
+        REQUIRE(res_trash_folder_a.code == 200);
+
+        crow::response res_create_folder_a2 = router.handle_create_folder(req_create_folder_a);
+        REQUIRE(res_create_folder_a2.code == 201);
+
+        crow::request req_restore_folder_a;
+        req_restore_folder_a.add_header("Authorization", "Bearer " + valid_token);
+        crow::response res_restore_folder_a = router.handle_restore_folder(req_restore_folder_a, folder_a_id);
+        REQUIRE(res_restore_folder_a.code == 409);
+        REQUIRE(res_restore_folder_a.body.find("Item ja existe no destino") != std::string::npos);
+    }
 
     {
         auto conn = pool.acquire_connection();
         pqxx::work txn(*conn);
-        txn.exec("DELETE FROM users WHERE username IN ('trash_user_1', 'trash_user_2')");
+        txn.exec("DELETE FROM users WHERE username IN ('" + test_username_1 + "', '" + test_username_2 + "')");
         txn.commit();
     }
 }
