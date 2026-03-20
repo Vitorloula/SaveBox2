@@ -12,14 +12,16 @@
 
 
 int main() {
-    std::string conn_str = get_secure_conn_string();
-    std::string pepper = get_pepper();
-    std::string jwt_secret = get_jwt_secret();
-    std::string storage_path = get_storage_path();
+    std::string conn_str = DotEnv::get_secure_conn_string();
+    std::string pepper = DotEnv::get_pepper();
+    std::string jwt_secret = DotEnv::get_jwt_secret();
+    std::string storage_path = DotEnv::get_storage_path();
+    std::string resend_api_key = DotEnv::get_resend_api_key();
+    std::string email_validation_api_key = DotEnv::get_email_validation_api_key();
 
     // Instancia as dependências
     DatabasePool pool(2, conn_str);
-    AuthService auth(pepper, jwt_secret);
+    AuthService auth(pepper, jwt_secret, resend_api_key, email_validation_api_key);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     FileChunker chunker(storage_path);

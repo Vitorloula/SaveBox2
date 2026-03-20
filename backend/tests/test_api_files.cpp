@@ -15,7 +15,8 @@
 TEST_CASE("API de Arquivos - Upload em Chunks", "[api][files]") {
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("A_noite_é_mais_escura_perto_do_amanhecer", "eu_trouxe_uma_primavera_pra_você");
+    MockEmailService mock_email;
+    AuthService auth("A_noite_é_mais_escura_perto_do_amanhecer", "eu_trouxe_uma_primavera_pra_você", &mock_email);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     FileChunker file_chunker("./savebox_storage/");

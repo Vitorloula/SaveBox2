@@ -17,7 +17,8 @@ TEST_CASE("API Delete - Exclusao de Arquivos", "[api][delete][file]") {
 
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("Eu_me_acho_um_condenado_por_não_saber", "o_que_fazer_pra_te_esquecer");
+    MockEmailService mock_email;
+    AuthService auth("Eu_me_acho_um_condenado_por_não_saber", "o_que_fazer_pra_te_esquecer", &mock_email);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     FileChunker chunker(test_dir);

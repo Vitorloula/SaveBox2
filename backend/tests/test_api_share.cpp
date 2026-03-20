@@ -17,7 +17,8 @@ TEST_CASE("API Share - Compartilhamento de Links Publicos", "[api][share][public
 
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("O_tiro_te_acertou_e_você_nem_deu_conta", "A_espada_atravessou_e_você_sentiu_nada");
+    MockEmailService mock_email;
+    AuthService auth("O_tiro_te_acertou_e_você_nem_deu_conta", "A_espada_atravessou_e_você_sentiu_nada", &mock_email);
     FileManager file_mgr(pool);
     FolderManager folder_mgr(pool);
     FileChunker chunker(test_dir);

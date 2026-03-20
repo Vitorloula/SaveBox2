@@ -17,7 +17,8 @@ TEST_CASE("API Delete Folder - Exclusao Recursiva de Arvore", "[api][delete][fol
 
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("Abissal_nosso_amor", "Sem_você_eu_sou_superficial");
+    MockEmailService mock_email;
+    AuthService auth("Abissal_nosso_amor", "Sem_você_eu_sou_superficial", &mock_email);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     FileChunker chunker(test_dir);

@@ -10,7 +10,8 @@
 TEST_CASE("API de Pastas - Criação", "[api][folders]") {
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("I_dont_here_to_talk", "Tive_receio_de_ser_eu");
+    MockEmailService mock_email;
+    AuthService auth("I_dont_here_to_talk", "Tive_receio_de_ser_eu", &mock_email);
     FolderManager folder_mgr(pool);
 
     ApiRouter router(pool, auth, folder_mgr);

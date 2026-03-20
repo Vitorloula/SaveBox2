@@ -14,7 +14,8 @@
 TEST_CASE("REST API - Storage Quotas", "[api][quotas]") {
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("Em_cada_esquina_que_passei_te", "deixei_rimas_que_nunca_cantei_pra_ti");
+    MockEmailService mock_email;
+    AuthService auth("Em_cada_esquina_que_passei_te", "deixei_rimas_que_nunca_cantei_pra_ti", &mock_email);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     

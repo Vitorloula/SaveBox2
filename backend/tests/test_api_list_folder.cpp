@@ -13,7 +13,8 @@
 TEST_CASE("API de Listagem de Diretórios", "[api][list_folder]") {
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("Presentes_são_apenas_presentes", "quando_estão_presentes_sem_a_sua_presença");
+    MockEmailService mock_email;
+    AuthService auth("Presentes_são_apenas_presentes", "quando_estão_presentes_sem_a_sua_presença", &mock_email);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     FileChunker file_chunker("./savebox_storage/");

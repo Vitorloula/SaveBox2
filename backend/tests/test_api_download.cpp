@@ -15,7 +15,8 @@
 TEST_CASE("API de Download de Arquivos", "[api][download]") {
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("Mas_quando_a_saudade_apertar_lembrar", "que_a_gente_ja_foi_amor");
+    MockEmailService mock_email;
+    AuthService auth("Mas_quando_a_saudade_apertar_lembrar", "que_a_gente_ja_foi_amor", &mock_email);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     FileChunker file_chunker("./savebox_storage/");

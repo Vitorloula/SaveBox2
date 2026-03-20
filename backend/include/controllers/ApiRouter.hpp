@@ -22,6 +22,7 @@ public:
     crow::response handle_get_quota(const crow::request& req);
     crow::response handle_register(const crow::request& req);
     crow::response handle_login(const crow::request& req);
+    crow::response handle_verify_email(const crow::request& req);
     crow::response handle_create_folder(const crow::request& req);
     crow::response handle_init_file_upload(const crow::request& req);
     crow::response handle_upload_chunk(const crow::request& req, int file_id);

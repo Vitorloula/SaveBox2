@@ -13,7 +13,8 @@
 TEST_CASE("API de Lixeira (Soft Delete)", "[api][trash]") {
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("Tô_aqui_pra_te_mandar_a_primeira_mensagem_de_hoje", "coincidencia_foi_pra_ti_a_ultima_de_ontem");
+    MockEmailService mock_email;
+    AuthService auth("Tô_aqui_pra_te_mandar_a_primeira_mensagem_de_hoje", "coincidencia_foi_pra_ti_a_ultima_de_ontem", &mock_email);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
 

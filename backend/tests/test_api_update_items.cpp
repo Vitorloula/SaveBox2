@@ -10,7 +10,8 @@
 TEST_CASE("API Update - Mover e Renomear Itens", "[api][update][files][folders]") {
     std::string conn_str = get_secure_conn_string();
     DatabasePool pool(2, conn_str);
-    AuthService auth("João_quem_é_você", "é_o_kaneda");
+    MockEmailService mock_email;
+    AuthService auth("João_quem_é_você", "é_o_kaneda", &mock_email);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     ApiRouter router(pool, auth, folder_mgr, &file_mgr);
