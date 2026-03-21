@@ -20,7 +20,8 @@ bool DatabaseMigration::run(DatabasePool& pool) {
                 token_expires_at TIMESTAMP WITH TIME ZONE,
                 max_storage_bytes BIGINT DEFAULT 5368709120,
                 used_storage_bytes BIGINT DEFAULT 0,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                registration_ip VARCHAR(45)
             );
         )");
 

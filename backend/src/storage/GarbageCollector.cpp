@@ -79,8 +79,6 @@ void GarbageCollector::run_cleanup() {
         W.exec(query_delete_folders);
 
         W.commit();
-        
-        std::cout << "[GC] Ciclo de limpeza concluido. Arquivos removidos: " << files_to_delete.size() << "\n";
 
     } catch (const std::exception& e) {
         std::cerr << "GC: Erro critico na Fase 3 (Exclusao do DB): " << e.what() << "\n";

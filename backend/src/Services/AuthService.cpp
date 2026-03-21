@@ -145,7 +145,7 @@ std::string AuthService::generate_uuid_v4() const {
     return std::string(uuid_str);
 }
 
-int AuthService::register_user(const std::string& username, const std::string& email, const std::string& password) {
+int AuthService::register_user(const std::string& username, const std::string& email, const std::string& password, const std::string& ip_address) {
     if (pool_ == nullptr) {
         throw std::runtime_error("AUTH_DB_NOT_CONFIGURED");
     }
@@ -165,6 +165,15 @@ int AuthService::register_user(const std::string& username, const std::string& e
     auto conn = pool_->acquire_connection();
     pqxx::work txn(*conn);
 
+    auto ip_count = txn.exec(
+        "SELECT count(*) FROM users WHERE registration_ip = $1 AND created_at > NOW() - INTERVAL '24 hours'",
+        pqxx::params{ip_address}
+    );
+
+    if (ip_count[0][0].as<int>() >= 3) {
+        throw std::runtime_error("TOO_MANY_ACCOUNTS_FROM_IP");
+    }
+
     auto check = txn.exec(
         "SELECT count(*) FROM users WHERE username = $1 OR email = $2",
         pqxx::params{username, email}
@@ -178,9 +187,9 @@ int AuthService::register_user(const std::string& username, const std::string& e
     const std::string verification_token = generate_uuid_v4();
 
     auto result = txn.exec(
-        "INSERT INTO users (username, email, password_hash, verification_token, token_expires_at) "
-        "VALUES ($1, $2, $3, $4, NOW() + INTERVAL '24 hours') RETURNING id",
-        pqxx::params{username, email, hash, verification_token}
+        "INSERT INTO users (username, email, password_hash, verification_token, token_expires_at, registration_ip) "
+        "VALUES ($1, $2, $3, $4, NOW() + INTERVAL '24 hours', $5) RETURNING id",
+        pqxx::params{username, email, hash, verification_token, ip_address}
     );
 
     txn.commit();

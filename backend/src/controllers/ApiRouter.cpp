@@ -40,11 +40,12 @@ crow::response ApiRouter::handle_register(const crow::request& req) {
             return crow::response(400, R"({"error":"Campos obrigatorios ausentes"})");
         }
 
+        std::string client_ip = req.remote_ip_address;
         std::string username = body["username"].s();
         std::string email = body["email"].s();
         std::string password = body["password"].s();
 
-        auth_->register_user(username, email, password);
+        auth_->register_user(username, email, password, client_ip);
         return crow::response(201, R"({"message":"Usuario criado. Verifique seu e-mail"})");
 
     } catch (const pqxx::unique_violation&) {
@@ -59,6 +60,9 @@ crow::response ApiRouter::handle_register(const crow::request& req) {
         }
         if (msg == "DISPOSABLE_EMAIL_LOCAL" || msg == "DISPOSABLE_EMAIL_API") {
             return crow::response(400, R"({"error":"E-mail descartavel nao permitido"})");
+        }
+        if (msg == "TOO_MANY_ACCOUNTS_FROM_IP") {
+            return crow::response(429, R"({"error":"Muitas contas criadas por esta rede recentemente. Tente novamente amanha."})");
         }
         return crow::response(500, R"({"error":"Erro interno"})");
 

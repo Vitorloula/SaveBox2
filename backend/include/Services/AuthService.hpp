@@ -19,7 +19,7 @@ public:
     std::string hash_password(const std::string& plain_password);
     bool verify_password(const std::string& plain_password, const std::string& hashed_password);
 
-    int register_user(const std::string& username, const std::string& email, const std::string& password);
+    int register_user(const std::string& username, const std::string& email, const std::string& password, const std::string& ip_address);
     int authenticate_user(const std::string& username, const std::string& password);
     bool verify_email(const std::string& token);
 
