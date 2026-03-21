@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "controllers/ApiRouter.hpp"
 #include "database/DatabasePool.hpp"
-#include "services/AuthService.hpp"
+#include "Services/AuthService.hpp"
 #include "database/FolderManager.hpp"
 #include "database/FileManager.hpp"
 #include "test_helpers.hpp"

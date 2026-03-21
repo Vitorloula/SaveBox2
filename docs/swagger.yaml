@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: SaveBox API
-  description: API do cofre digital SaveBox (auth, upload em chunks, árvore de arquivos, lixeira e compartilhamento)
+  description: API do SaveBox
   version: 1.0.0
 
 servers:

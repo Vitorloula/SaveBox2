@@ -1,6 +1,6 @@
-#include "services/AuthService.hpp"
+#include "Services/AuthService.hpp"
 #include "database/DatabasePool.hpp"
-#include "services/EmailService.hpp"
+#include "Services/EmailService.hpp"
 #include "utils.hpp"
 
 #include <jwt-cpp/jwt.h>

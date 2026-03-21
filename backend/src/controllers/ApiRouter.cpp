@@ -684,9 +684,14 @@ void ApiRouter::setup_routes(crow::App<crow::CORSHandler, RateLimitMiddleware>& 
 
     CROW_ROUTE(app, "/api/docs/swagger.yaml")
     ([]() {
-        std::ifstream ifs("../../docs/swagger.yaml"); 
-        
+        std::ifstream ifs("./docs/swagger.yaml");
+    
         if (!ifs.is_open()) {
+            ifs.open("../../docs/swagger.yaml");
+        }
+
+        if (!ifs.is_open()) {
+            CROW_LOG_ERROR << "ERRO: swagger.yaml nao encontrado!";
             return crow::response(404, "Arquivo swagger.yaml nao encontrado no servidor.");
         }
         
