@@ -134,6 +134,20 @@ TEST_CASE("API de Download de Arquivos", "[api][download]") {
         REQUIRE(res.body == "CONTEUDO_FAKE_BINARIO");
     }
 
+    SECTION("Resiliência IO: Download falha graciosamente quando arquivo não pode ser lido do disco") {
+        std::filesystem::remove(storage_path);
+
+        crow::request req;
+        req.add_header("Authorization", "Bearer " + token_a);
+        req.url = "/files/" + std::to_string(file_complete_id) + "/download";
+
+        crow::response res = router.handle_download_file(req, file_complete_id);
+
+
+        REQUIRE(res.code >= 400);
+        REQUIRE(res.code < 600);
+    }
+
 
     {
         auto conn = pool.acquire_connection();

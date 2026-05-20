@@ -425,6 +425,9 @@ crow::response ApiRouter::handle_download_file(const crow::request& req, int fil
         if (msg.find("INCOMPLETE") != std::string::npos) {
             return crow::response(400, R"({"error":"Upload incompleto"})");
         }
+        if (msg.find("IO_RESOURCE_EXHAUSTED") != std::string::npos) {
+            return crow::response(503, R"({"error":"Service Unavailable - IO Resource Exhausted"})");
+        }
         return crow::response(500, R"({"error":"Erro interno"})");
     }
 }
@@ -847,6 +850,9 @@ crow::response ApiRouter::handle_get_shared_file(const crow::request& req, const
     } catch (const std::exception& e) {
         std::string msg = e.what();
         if (msg == "NOT_FOUND") return crow::response(404, R"({"error":"Link invalido ou expirado"})");
+        if (msg.find("IO_RESOURCE_EXHAUSTED") != std::string::npos) {
+            return crow::response(503, R"({"error":"Service Unavailable - IO Resource Exhausted"})");
+        }
         return crow::response(500, R"({"error":"Erro interno"})");
     }
 }
@@ -903,13 +909,17 @@ void ApiRouter::setup_routes(crow::App<crow::CORSHandler, RateLimitMiddleware>& 
             ifs.open("../../docs/swagger.yaml");
         }
 
-        if (!ifs.is_open()) {
-            CROW_LOG_ERROR << "ERRO: swagger.yaml nao encontrado!";
-            return crow::response(404, "Arquivo swagger.yaml nao encontrado no servidor.");
+        if (!ifs.is_open() || !ifs.good()) {
+            CROW_LOG_ERROR << "ERRO: swagger.yaml nao encontrado ou IO Resource Exhausted!";
+            return crow::response(503, "Service Unavailable - IO Resource Exhausted");
         }
         
         std::stringstream buffer;
         buffer << ifs.rdbuf();
+
+        if (ifs.fail() && !ifs.eof()) {
+            return crow::response(503, "Service Unavailable - IO Resource Exhausted");
+        }
         
         auto res = crow::response(buffer.str());
         res.set_header("Content-Type", "text/yaml");

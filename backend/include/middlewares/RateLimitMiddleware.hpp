@@ -16,7 +16,11 @@ struct RateLimitMiddleware {
     struct ClientData {
         int count = 0;
         std::chrono::steady_clock::time_point window_start = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point last_request = std::chrono::steady_clock::now();
     };
+
+    static constexpr size_t MAX_CLIENTS = 10000;
+    static constexpr auto CLIENT_TTL = std::chrono::minutes(2);
 
     void init(DatabasePool& pool) {
         pool_ = &pool;
@@ -83,11 +87,23 @@ struct RateLimitMiddleware {
                 banned_ips_cache.erase(banned_it);
             }
 
-            if (clients_.size() > 10000) {
-                clients_.clear();
+            if (clients_.size() > MAX_CLIENTS) {
+                evict_expired_clients(now_steady);
+            }
+
+            if (clients_.size() >= MAX_CLIENTS) {
+                auto existing = clients_.find(ip);
+                if (existing == clients_.end()) {
+                    res.code = 429;
+                    res.set_header("Content-Type", "application/json");
+                    res.body = R"({"error": "Too Many Requests"})";
+                    res.end();
+                    return;
+                }
             }
 
             auto& client = clients_[ip];
+            client.last_request = now_steady;
 
             if (now_steady - client.window_start >= std::chrono::minutes(1)) {
                 client.count = 0;
@@ -137,7 +153,6 @@ struct RateLimitMiddleware {
                     pqxx::params{ip, epoch_seconds});
                 w.commit();
             } catch (...) {
-                // Mantem o ban em RAM mesmo se houver falha no banco.
             }
 
             res.code = 403;
@@ -151,6 +166,16 @@ struct RateLimitMiddleware {
     void after_handle(crow::request&, crow::response&, context&) {}
 
 private:
+    void evict_expired_clients(std::chrono::steady_clock::time_point now) {
+        for (auto it = clients_.begin(); it != clients_.end(); ) {
+            if (now - it->second.last_request >= CLIENT_TTL) {
+                it = clients_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     std::unordered_map<std::string, ClientData> clients_;
     std::unordered_map<std::string, std::chrono::system_clock::time_point> banned_ips_cache;
     DatabasePool* pool_ = nullptr;

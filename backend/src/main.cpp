@@ -11,11 +11,19 @@
 #include <csignal>
 #include <crow_all.h>
 #include <iostream>
+#include <sodium.h>
 
 
 
 
 int main() {
+
+    if (sodium_init() == -1) {
+        std::cerr << "[FATAL] libsodium nao pode ser inicializada.\n";
+        return 1;
+    }
+
+
     std::string conn_str = DotEnv::get_secure_conn_string();
     std::string pepper = DotEnv::get_pepper();
     std::string jwt_secret = DotEnv::get_jwt_secret();
@@ -26,6 +34,9 @@ int main() {
     // Instancia as dependências
     DatabasePool pool(2, conn_str);
     DatabaseMigration::run(pool);
+
+
+
     AuthService auth(pepper, jwt_secret, resend_api_key, email_validation_api_key);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
@@ -73,10 +84,11 @@ int main() {
     // Roda o servidor na porta 8080 usando múltiplas threads
     app.port(8080).multithreaded().run();
 
-    std::cout << "\n[SERVER] Desligamento iniciado. Parando o Garbage Collector...\n";
-    std::cout << "[SERVER] Fechando conexões com o banco de dados...\n";
 
-    pool.close_all_connections();
+
+    
+    std::cout << "\n[SERVER] Desligamento iniciado. Parando o Garbage Collector...\n";
+
     gc_running = false; 
     gc_cv.notify_all(); 
     
@@ -85,6 +97,10 @@ int main() {
     }
     
     std::cout << "[SERVER] Garbage Collector parado com sucesso.\n";
+    std::cout << "[SERVER] Fechando conexões com o banco de dados...\n";
+
+    pool.close_all_connections();
+
     std::cout << "[SERVER] Banco de dados desconectado.\n";
 
     return 0;
