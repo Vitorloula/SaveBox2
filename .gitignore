@@ -53,3 +53,9 @@ Desktop.ini
 # === Testes ===
 # Se o Catch2 gerar algum arquivo de reporte de lixo
 _tests/
+client-web/coverage/
+
+# === Dependencias Web ===
+client-web/node_modules/
+
+savebox_storage/

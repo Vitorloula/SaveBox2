@@ -445,7 +445,7 @@ public class SaveBoxClient {
         Long searchId = currentFolderId;
         while (searchId != null) {
             final Long targetId = searchId;
-            FolderInfo match = allSystemFolders.stream().filter(f -> f.id.equals(targetId)).findFirst().orElse(null);
+            FolderInfo match = allSystemFolders.stream().filter(f -> f.id == targetId).findFirst().orElse(null);
             if (match != null) {
                 path.add(0, match.name);
                 searchId = match.parentId;
@@ -479,7 +479,7 @@ public class SaveBoxClient {
             return;
         }
         Long searchId = currentFolderId;
-        FolderInfo current = allSystemFolders.stream().filter(f -> f.id.equals(searchId)).findFirst().orElse(null);
+        FolderInfo current = allSystemFolders.stream().filter(f -> f.id == searchId).findFirst().orElse(null);
         if (current != null) {
             currentFolderId = current.parentId;
             System.out.println(GREEN + "Subiu de nível." + RESET);
