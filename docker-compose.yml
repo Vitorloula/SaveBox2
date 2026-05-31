@@ -32,9 +32,11 @@ services:
       DB_NAME: ${DB_NAME}
       
       PASS_PEPPER: ${PASS_PEPPER}
+      SAVEBOX_PEPPER: ${SAVEBOX_PEPPER}
       SAVEBOX_JWT_SECRET: ${SAVEBOX_JWT_SECRET}
       RESEND_API_KEY: ${RESEND_API_KEY}
       EMAIL_VALIDATION_API_KEY: ${EMAIL_VALIDATION_API_KEY}
+      CORS_ORIGIN: ${CORS_ORIGIN}
       SAVEBOX_STORAGE_PATH: /app/savebox_storage/
     volumes:
       - ./savebox_storage:/app/savebox_storage
