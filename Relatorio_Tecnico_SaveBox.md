@@ -198,5 +198,83 @@ O cliente desktop foi programado em Java 11 puramente sem dependências externas
 
 ---
 
-### 7. Conclusão
-O ecossistema **SaveBox 2.0** atende integralmente todos os requisitos solicitados para a entrega acadêmica, consolidando a migração definitiva para uma comunicação moderna baseada em REST APIs, promovendo a cooperação real entre clientes escritos em múltiplas linguagens e demonstrando um robusto arcabouço de segurança criptográfica com arquiteturas robustas em Vue.js e Java Desktop.
+### 7. Evolução da Arquitetura: Comunicação Indireta via Fila de Mensagens (Transactional Outbox)
+
+Em conformidade com os requisitos de evolução da arquitetura do SaveBox para integrar comunicação indireta, a equipe implementou a **Opção C: Filas de Mensagens (Message Queues)** utilizando a estratégia de **Fila Transacional no PostgreSQL** integrada ao backend C++ (*Transactional Outbox Pattern*).
+
+#### 7.1. Justificativa da Escolha da Abordagem
+A escolha por Filas de Mensagens (Message Queues) é a mais adequada para o cenário do SaveBox pelos seguintes motivos estruturais:
+* **Gargalo Síncrono Real**: Anteriormente, a rota de cadastro (`POST /register`) realizava um acoplamento temporal crítico com o serviço externo **Resend API** para envio do e-mail de verificação. A requisição HTTP síncrona bloqueava a thread de execução do servidor por até 10 segundos, tornando o sistema vulnerável a lentidões ou falhas na rede externa.
+* **Preservação do Modelo Cliente-Servidor Criptográfico**: Outras abordagens, como Espaços de Tuplas ou Comunicação em Grupo, exigiriam uma reengenharia completa das chamadas RESTful e do protocolo criptográfico *Zero-Knowledge* ponta a ponta. A fila de mensagens atua como um facilitador assíncrono perfeitamente acoplável sem alterar a lógica de metadados do cliente.
+* **Desacoplamento Espacial e Temporal**: O emissor da mensagem (a rota de cadastro de usuários no C++) não conhece a identidade, IP ou porta do receptor (a thread worker que dispara o e-mail via API externa), configurando o **desacoplamento espacial**. O **desacoplamento temporal** é garantido pois o cadastro de usuários é concluído mesmo se o worker de e-mails estiver completamente inativo ou se a API de destino estiver fora do ar.
+
+#### 7.2. Detalhes da Implementação (C++)
+A fila foi modelada diretamente na tabela `email_queue` do banco de dados PostgreSQL:
+```sql
+CREATE TABLE email_queue (
+    id BIGSERIAL PRIMARY KEY,
+    to_email VARCHAR(255) NOT NULL,
+    verification_token VARCHAR(128) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- PENDING, PROCESSING, SENT, FAILED
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_email_queue_status ON email_queue(status);
+```
+
+##### Fluxo de Funcionamento:
+1. **Gravação Atômica (Outbox)**: Durante a execução de `AuthService::register_user`, o registro do usuário e a criação da tarefa de e-mail ocorrem na **mesma transação SQL**. Isso assegura consistência absoluta: o e-mail só é enfileirado se o usuário for criado com sucesso no banco.
+2. **Processamento Assíncrono (Worker)**: A classe `EmailQueueProcessor` gerencia uma thread em segundo plano que executa consultas periódicas (a cada 5 segundos) no banco de dados.
+3. **Mecanismo de Concorrência Seguro (SKIP LOCKED)**: O worker busca as mensagens utilizando a query:
+   ```sql
+   UPDATE email_queue
+   SET status = 'PROCESSING', updated_at = NOW()
+   WHERE id IN (
+       SELECT id FROM email_queue
+       WHERE status = 'PENDING' OR (status = 'FAILED' AND attempts < 3)
+       ORDER BY id ASC
+       FOR UPDATE SKIP LOCKED
+       LIMIT 5
+   )
+   RETURNING id, to_email, verification_token, attempts;
+   ```
+   O comando `FOR UPDATE SKIP LOCKED` garante que, se múltiplos workers estiverem executando concorrentemente, eles nunca pegarão os mesmos e-mails e não haverá bloqueio de threads, escalando horizontalmente de forma segura.
+
+#### 7.3. Análise de Desempenho e Overhead
+* **Sobrecarga (Overhead) Introduzida**:
+  * **E/S e Espaço em Banco**: Cada cadastro de usuário exige agora duas inserções na mesma transação, aumentando marginalmente o tráfego de gravação de logs (WAL) do banco de dados.
+  * **Latência Fim-a-Fim**: A entrega do e-mail não é imediata no instante do clique; ela depende da frequência de varredura do processador (intervalo de 5 segundos).
+  * **Complexidade de Gerenciamento**: Introdução de um estado intermediário (`PROCESSING`, `FAILED`) e necessidade de controle de ciclo de vida da thread de background.
+* **Mitigações**:
+  * Criação de índice na coluna `status` da tabela `email_queue`, garantindo que a varredura por itens pendentes (`PENDING`) ocorra em tempo sub-milissegundo, sem varrer a tabela inteira.
+  * Utilização do padrão `SKIP LOCKED` do PostgreSQL, evitando bloqueios na tabela que poderiam afetar a inserção de novos cadastros.
+
+#### 7.4. Robustez, Tolerância a Falhas e Recuperação de Estado
+Se o banco de dados cair, o sistema é interrompido de forma limpa sem perdas de integridade graças às propriedades ACID do PostgreSQL. Se a API externa do Resend falhar ou se o worker de processamento de e-mails cair no meio de um envio:
+1. O status do job é atualizado para `FAILED`.
+2. O worker incrementa o contador `attempts`.
+3. Em ciclos subsequentes de execução, o worker tenta reprocessar jobs falhos (`attempts < 3`).
+4. Se o limite de 3 tentativas for atingido, o job é permanentemente marcado como `FAILED` e o log de erro é armazenado no campo `last_error`, permitindo auditoria sem travar a fila.
+
+#### 7.5. Guia para Demonstração de Desacoplamento em Tempo Real
+Para provar o desacoplamento e resiliência do sistema em tempo real na apresentação:
+1. **Derrubando o Consumidor (Desacoplamento Temporal)**: 
+   * Modifique o arquivo de configuração `.env` temporariamente para utilizar uma chave de API de e-mail inválida ou pare o backend e comente a linha `queue_processor.start();` no arquivo `main.cpp`.
+   * Realize o cadastro de um novo usuário através do Cliente Web (`http://localhost:3000`) ou CLI Java.
+   * Observe que o cadastro é efetuado **com sucesso e de forma instantânea**, confirmando que a rota de API não depende do receptor de e-mail estar funcional no momento.
+2. **Visualização do Estado de Espera**:
+   * Execute a seguinte consulta no banco de dados PostgreSQL para verificar a retenção de dados:
+     ```sql
+     SELECT to_email, status, attempts, last_error FROM email_queue;
+     ```
+   * O registro estará na tabela com status `PENDING` ou `FAILED` com as tentativas registradas, provando a retenção física da mensagem.
+3. **Recuperação e Processamento Posterior**:
+   * Reinicie o servidor com as configurações corretas de envio.
+   * O processador consumirá a mensagem pendente e enviará o e-mail, confirmando a recuperação sem qualquer intervenção manual ou perda de dados do usuário.
+
+---
+
+### 8. Conclusão
+O ecossistema **SaveBox 2.0** atende integralmente todos os requisitos solicitados para a entrega acadêmica, consolidando a migração definitiva para uma comunicação moderna baseada em REST APIs, promovendo a cooperação real entre clientes escritos em múltiplas linguagens e demonstrando um robusto arcabouço de segurança criptográfica com arquiteturas robustas em Vue.js e Java Desktop, agora evoluído com uma arquitetura de comunicação indireta resiliente e desacoplada.

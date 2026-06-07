@@ -85,6 +85,21 @@ bool DatabaseMigration::run(DatabasePool& pool) {
             );
         )");
 
+        // FILA DE E-MAILS (TRANSACTIONAL OUTBOX)
+        w.exec(R"(
+            CREATE TABLE IF NOT EXISTS email_queue (
+                id BIGSERIAL PRIMARY KEY,
+                to_email VARCHAR(255) NOT NULL,
+                verification_token VARCHAR(128) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        )");
+        w.exec("CREATE INDEX IF NOT EXISTS idx_email_queue_status ON email_queue(status);");
+
         // PASTAS
         w.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_folder_root_active ON folders (user_id, name_hash) WHERE parent_id IS NULL AND deleted_at IS NULL;");
         w.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_folder_sub_active ON folders (user_id, parent_id, name_hash) WHERE parent_id IS NOT NULL AND deleted_at IS NULL;");

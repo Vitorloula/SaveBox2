@@ -1,5 +1,8 @@
 #include "database/DatabasePool.hpp"
 #include <stdexcept>
+#include <thread>
+#include <chrono>
+#include <iostream>
 
 
 
@@ -52,7 +55,22 @@ DatabasePool::DatabasePool(size_t pool_size, const std::string& conn_str)
     for (size_t i = 0; i < pool_size; ++i) {
         std::unique_ptr<pqxx::connection> conn;
         if (!connection_string_.empty()) {
-            conn = std::make_unique<pqxx::connection>(connection_string_);
+            int retries = 15;
+            while (retries > 0) {
+                try {
+                    conn = std::make_unique<pqxx::connection>(connection_string_);
+                    break;
+                } catch (const std::exception& e) {
+                    retries--;
+                    if (retries == 0) {
+                        std::cerr << "[DatabasePool] Erro critico ao conectar ao banco de dados: " << e.what() << std::endl;
+                        throw;
+                    }
+                    std::cerr << "[DatabasePool] Aguardando banco de dados... (" << e.what() 
+                              << "). Retentando em 2 segundos. Tentativas restantes: " << retries << std::endl;
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                }
+            }
         }
         connections_.push(std::move(conn));
     }

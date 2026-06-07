@@ -169,11 +169,12 @@ int AuthService::register_user(const std::string& username, const std::string& e
         pqxx::params{username, email, hash, verification_token, ip_address}
     );
 
-    txn.commit();
+    txn.exec(
+        "INSERT INTO email_queue (to_email, verification_token) VALUES ($1, $2)",
+        pqxx::params{email, verification_token}
+    );
 
-    if (email_service_ != nullptr) {
-        email_service_->send_verification_email(email, verification_token);
-    }
+    txn.commit();
 
     return result[0][0].as<int>();
 }

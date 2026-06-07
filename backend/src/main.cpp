@@ -2,6 +2,8 @@
 #include "database/DatabaseMigration.hpp"
 #include "database/DatabasePool.hpp"
 #include "Services/AuthService.hpp"
+#include "Services/EmailService.hpp"
+#include "Services/EmailQueueProcessor.hpp"
 #include "database/FolderManager.hpp"
 #include "database/FileManager.hpp"
 #include "storage/GarbageCollector.hpp"
@@ -16,6 +18,7 @@
 
 
 int main() {
+    std::cout.setf(std::ios::unitbuf); // Desativa buffering do stdout para mostrar logs em tempo real no Docker
     std::string conn_str = DotEnv::get_secure_conn_string();
     std::string pepper = DotEnv::get_pepper();
     std::string jwt_secret = DotEnv::get_jwt_secret();
@@ -26,7 +29,13 @@ int main() {
     // Instancia as dependências
     DatabasePool pool(2, conn_str);
     DatabaseMigration::run(pool);
-    AuthService auth(pepper, jwt_secret, resend_api_key, email_validation_api_key);
+
+    // Inicialização da fila de e-mails transacional em C++
+    EmailService email_service(resend_api_key, email_validation_api_key);
+    EmailQueueProcessor queue_processor(pool, email_service);
+    queue_processor.start();
+
+    AuthService auth(pepper, jwt_secret, &email_service);
     FolderManager folder_mgr(pool);
     FileManager file_mgr(pool);
     FileChunker chunker(storage_path);
@@ -73,10 +82,10 @@ int main() {
     // Roda o servidor na porta 8080 usando múltiplas threads
     app.port(8080).multithreaded().run();
 
-    std::cout << "\n[SERVER] Desligamento iniciado. Parando o Garbage Collector...\n";
-    std::cout << "[SERVER] Fechando conexões com o banco de dados...\n";
+    std::cout << "\n[SERVER] Desligamento iniciado. Parando o Processador de Filas de E-mail...\n";
+    queue_processor.stop();
 
-    pool.close_all_connections();
+    std::cout << "[SERVER] Parando o Garbage Collector...\n";
     gc_running = false; 
     gc_cv.notify_all(); 
     
@@ -85,6 +94,9 @@ int main() {
     }
     
     std::cout << "[SERVER] Garbage Collector parado com sucesso.\n";
+    std::cout << "[SERVER] Fechando conexões com o banco de dados...\n";
+
+    pool.close_all_connections();
     std::cout << "[SERVER] Banco de dados desconectado.\n";
 
     return 0;
